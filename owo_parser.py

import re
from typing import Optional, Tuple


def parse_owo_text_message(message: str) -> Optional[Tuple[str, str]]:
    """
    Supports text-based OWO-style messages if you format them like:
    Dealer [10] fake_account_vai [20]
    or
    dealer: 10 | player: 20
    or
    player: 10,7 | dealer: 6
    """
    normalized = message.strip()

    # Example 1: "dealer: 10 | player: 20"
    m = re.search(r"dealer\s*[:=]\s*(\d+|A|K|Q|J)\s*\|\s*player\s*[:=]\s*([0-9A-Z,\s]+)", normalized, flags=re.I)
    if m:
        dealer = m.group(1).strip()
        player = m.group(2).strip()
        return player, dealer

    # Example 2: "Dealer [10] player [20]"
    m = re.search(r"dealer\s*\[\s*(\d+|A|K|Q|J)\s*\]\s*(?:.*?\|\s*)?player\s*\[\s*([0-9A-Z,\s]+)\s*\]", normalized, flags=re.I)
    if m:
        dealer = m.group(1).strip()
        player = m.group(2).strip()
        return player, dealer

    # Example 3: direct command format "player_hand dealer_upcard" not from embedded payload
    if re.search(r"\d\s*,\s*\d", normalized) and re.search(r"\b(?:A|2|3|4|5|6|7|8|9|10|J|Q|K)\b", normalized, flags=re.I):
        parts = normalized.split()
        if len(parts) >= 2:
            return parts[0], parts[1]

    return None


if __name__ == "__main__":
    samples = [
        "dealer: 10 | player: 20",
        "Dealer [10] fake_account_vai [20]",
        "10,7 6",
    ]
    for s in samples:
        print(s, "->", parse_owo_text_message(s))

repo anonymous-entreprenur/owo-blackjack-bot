@@ -1,0 +1,168 @@
+import re
+from typing import List, Tuple, Dict
+
+CARD_VALUES = {
+    "A": 11,
+    "K": 10,
+    "Q": 10,
+    "J": 10,
+    "10": 10,
+    "9": 9,
+    "8": 8,
+    "7": 7,
+    "6": 6,
+    "5": 5,
+    "4": 4,
+    "3": 3,
+    "2": 2,
+}
+
+
+def normalize_card(card: str) -> str:
+    value = card.strip().upper().replace(" ", "")
+    if value in {"ACE", "A"}:
+        return "A"
+    if value in {"KING", "K"}:
+        return "K"
+    if value in {"QUEEN", "Q"}:
+        return "Q"
+    if value in {"JACK", "J"}:
+        return "J"
+    if value in {"10", "9", "8", "7", "6", "5", "4", "3", "2"}:
+        return value
+    raise ValueError(f"Unsupported card: '{card}'")
+
+
+def card_value(card: str) -> int:
+    return CARD_VALUES[normalize_card(card)]
+
+
+def is_pair(cards: List[str]) -> bool:
+    return len(cards) == 2 and normalize_card(cards[0]) == normalize_card(cards[1])
+
+
+def hand_value(cards: List[str]) -> Tuple[int, bool]:
+    total = 0
+    aces = 0
+    for c in cards:
+        total += card_value(c)
+        if normalize_card(c) == "A":
+            aces += 1
+    while total > 21 and aces > 0:
+        total -= 10
+        aces -= 1
+    return total, aces > 0 and total <= 21
+
+
+def is_blackjack(cards: List[str]) -> bool:
+    if len(cards) != 2:
+        return False
+    values = [normalize_card(c) for c in cards]
+    return ("A" in values) and any(v in {"10", "K", "Q", "J"} for v in values)
+
+
+def pair_action(pair: str, dealer_up: str) -> str:
+    pair_value = normalize_card(pair)
+    dealer = normalize_card(dealer_up)
+    dealer_val = card_value(dealer)
+
+    if pair_value == "A":
+        return "P"
+    if pair_value in {"K", "Q", "J", "10"}:
+        return "S"
+    if pair_value == "9":
+        if dealer_val in {3, 4, 5, 6}: return "P"
+        return "S"
+    if pair_value == "8":
+        return "P"
+    if pair_value == "7":
+        if dealer_val in {2, 3, 4, 5, 6, 7}: return "P"
+        return "H"
+    if pair_value == "6":
+        if dealer_val in {2, 3, 4, 5, 6}: return "P"
+        return "H"
+    if pair_value == "5":
+        return "D"
+    if pair_value == "4":
+        if dealer_val in {5, 6}: return "P"
+        return "H"
+    if pair_value in {"3", "2"}:
+        if dealer_val in {2, 3, 4, 5, 6, 7}: return "P"
+        return "H"
+    return "H"
+
+
+def hard_total_action(total: int, dealer_up: str) -> str:
+    dealer_val = card_value(normalize_card(dealer_up))
+    if total <= 8:
+        return "H"
+    if total == 9:
+        return "H"
+    if total in {10, 11}:
+        return "D" if dealer_val in {2, 3, 4, 5, 6, 7, 8, 9} else "H"
+    if total == 12:
+        return "S" if dealer_val in {4, 5, 6} else "H"
+    if total in {13, 14, 15, 16}:
+        return "S" if dealer_val in {2, 3, 4, 5, 6} else "H"
+    if total >= 17:
+        return "S"
+    return "H"
+
+
+def soft_total_action(total: int, dealer_up: str) -> str:
+    dealer_val = card_value(normalize_card(dealer_up))
+    if total in {13, 14, 15, 16}:
+        return "H"
+    if total == 17:
+        return "D" if dealer_val in {3, 4, 5, 6} else "H"
+    if total == 18:
+        if dealer_val in {2, 3, 4, 5, 6}:
+            return "D"
+        return "S"
+    if total == 19:
+        return "D" if dealer_val == 6 else "S"
+    return "S"
+
+
+def parse_cards(text: str) -> List[str]:
+    parts = [p.strip() for p in re.split(r"[,/\s]+", text.strip()) if p.strip()]
+    if not parts:
+        raise ValueError("No cards provided.")
+    return [normalize_card(p) for p in parts]
+
+
+def recommend_action(player_hand: str, dealer_upcard: str, can_double: bool = True, can_split: bool = True) -> Dict[str, str]:
+    cards = parse_cards(player_hand)
+    if len(cards) < 2:
+        raise ValueError("Provide at least two cards.")
+    total, is_soft = hand_value(cards)
+
+    if is_blackjack(cards):
+        return {"action": "BLACKJACK", "reason": "Natural blackjack."}
+
+    if is_pair(cards) and can_split:
+        action = pair_action(cards[0], dealer_upcard)
+        if action == "P":
+            return {"action": "Split", "reason": "Pair split is best against this dealer upcard."}
+        if action == "D" and can_double:
+            return {"action": "Double", "reason": "This pair is best treated as a double if allowed."}
+
+    action = soft_total_action(total, dealer_upcard) if is_soft else hard_total_action(total, dealer_upcard)
+    if action == "D" and not can_double:
+        action = "H"
+
+    action_label = {"H": "Hit", "S": "Stand", "D": "Double"}.get(action, "Hit")
+    return {"action": action_label, "reason": f"Standard strategy for a {total}-point hand against dealer {dealer_upcard}."}
+
+
+if __name__ == "__main__":
+    tests = [
+        ("10,7", "6"),
+        ("A,8", "10"),
+        ("9,9", "5"),
+        ("8,7", "10"),
+        ("5,5", "9"),
+    ]
+    for hand, dealer in tests:
+        result = recommend_action(hand, dealer)
+        print(hand, dealer, "->", result)

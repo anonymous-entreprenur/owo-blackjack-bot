@@ -1,0 +1,76 @@
+import os
+import re
+from typing import Optional
+
+import discord
+from discord.ext import commands
+from dotenv import load_dotenv
+
+from blackjack_strategy import recommend_action
+from owo_parser import parse_owo_text_message
+
+load_dotenv()
+
+intents = discord.Intents.default()
+intents.message_content = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+WATCH_CHANNELS = {c.strip().lower() for c in os.getenv("WATCH_CHANNELS", "owo-farm").split(",") if c.strip()}
+
+
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user.name} ({bot.user.id})")
+    print("OWO blackjack helper ready.")
+
+
+@bot.command(name="b")
+async def blackjack_manual(ctx, player_hand: str, dealer_upcard: str, *flags):
+    """Manual command: !b 10,7 6"""
+    flags_lower = {f.lower() for f in flags}
+    can_double = "--double" in flags_lower or "-d" in flags_lower
+    can_split = "--split" in flags_lower or "-s" in flags_lower
+    try:
+        result = recommend_action(player_hand, dealer_upcard, can_double=can_double, can_split=can_split)
+        await ctx.send(f"Player hand: **{player_hand}** | Dealer upcard: **{dealer_upcard}**\nRecommended move: **{result['action']}**\nReason: {result['reason']}")
+    except ValueError as exc:
+        await ctx.send(f"Invalid format: {exc}\nUse: `!b 10,7 6` or `!b A,8 10`")
+
+
+@bot.command(name="bhelp")
+async def blackjack_help(ctx):
+    await ctx.send(
+        "```\n!b <player_hand> <dealer_upcard> [--double] [--split]\nExample:\n!b 10,7 6\n!b A,8 10\n!b 9,9 5 --split\n```"
+    )
+
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    channel_name = message.channel.name.lower()
+    if WATCH_CHANNELS and channel_name not in WATCH_CHANNELS:
+        return
+
+    parsed = parse_owo_text_message(message.content)
+    if not parsed:
+        return
+
+    player_hand, dealer_upcard = parsed
+    try:
+        result = recommend_action(player_hand, dealer_upcard)
+        recommended = result["action"]
+        reason = result["reason"]
+        await message.reply(f"Recommended move: **{recommended}**\nReason: {reason}")
+    except Exception:
+        pass
+
+    await bot.process_commands(message)
+
+
+if __name__ == "__main__":
+    token = os.getenv("DISCORD_TOKEN")
+    if not token:
+        raise RuntimeError("DISCORD_TOKEN missing. Put it in .env")
+    bot.run(token)
